@@ -7,7 +7,7 @@ const MAX_EVENTS = 2000;
 // Bump on every panel.js change and shown in the header, so you can tell at a
 // glance whether Home Assistant is serving the latest panel (vs a cached/stale
 // copy). Expected build is called out in chat when it changes.
-const PANEL_BUILD = "h1";
+const PANEL_BUILD = "h2";
 
 const KIND_COLOR = {
   request: "#3b82f6",

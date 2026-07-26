@@ -20,7 +20,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL_PATH = "grenton-native"
-PANEL_JS_URL = "/grenton_native_frontend/panel.js"
+PANEL_JS_DIR = "/grenton_native_frontend"
 PANEL_ELEMENT = "grenton-native-panel"
 _REGISTERED_FLAG = f"{DOMAIN}_panel_registered"
 RUNTIME_KEY = "runtime"
@@ -31,9 +31,18 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         return
     hass.data[_REGISTERED_FLAG] = True
 
+    # Cache-bust via the PATH (not a ?query): the frontend/HACS can append its
+    # own ?cache tag to module_url, and a second '?' would corrupt the URL. A
+    # build segment in the path changes whenever panel.js changes and needs no
+    # query string.
     js_path = os.path.join(os.path.dirname(__file__), "panel.js")
+    try:
+        build = int(os.path.getmtime(js_path))
+    except OSError:
+        build = 0
+    panel_js_url = f"{PANEL_JS_DIR}/{build}/panel.js"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(PANEL_JS_URL, js_path, cache_headers=False)]
+        [StaticPathConfig(panel_js_url, js_path, cache_headers=False)]
     )
 
     websocket_api.async_register_command(hass, ws_status)
@@ -44,15 +53,6 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_set_active)
     websocket_api.async_register_command(hass, ws_objects)
     websocket_api.async_register_command(hass, ws_watch_visible)
-
-    # Cache-bust the ES module URL with the file's mtime — HA/browsers cache the
-    # panel module aggressively by URL, so a fixed URL keeps serving a stale
-    # panel.js even after a hard refresh. A changing ?v= forces a fresh fetch.
-    try:
-        mtime = int(os.path.getmtime(js_path))
-    except OSError:
-        mtime = 0
-    module_url = f"{PANEL_JS_URL}?v={mtime}"
 
     if not frontend.async_panel_exists(hass, PANEL_URL_PATH):
         frontend.async_register_built_in_panel(
@@ -66,7 +66,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
             config={
                 "_panel_custom": {
                     "name": PANEL_ELEMENT,
-                    "module_url": module_url,
+                    "module_url": panel_js_url,
                     "embed_iframe": False,
                     "trust_external": False,
                 }

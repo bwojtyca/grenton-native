@@ -43,6 +43,15 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_watch)
     websocket_api.async_register_command(hass, ws_set_active)
 
+    # Cache-bust the ES module URL with the file's mtime — HA/browsers cache the
+    # panel module aggressively by URL, so a fixed URL keeps serving a stale
+    # panel.js even after a hard refresh. A changing ?v= forces a fresh fetch.
+    try:
+        mtime = int(os.path.getmtime(js_path))
+    except OSError:
+        mtime = 0
+    module_url = f"{PANEL_JS_URL}?v={mtime}"
+
     if not frontend.async_panel_exists(hass, PANEL_URL_PATH):
         frontend.async_register_built_in_panel(
             hass,
@@ -55,7 +64,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
             config={
                 "_panel_custom": {
                     "name": PANEL_ELEMENT,
-                    "module_url": PANEL_JS_URL,
+                    "module_url": module_url,
                     "embed_iframe": False,
                     "trust_external": False,
                 }

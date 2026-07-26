@@ -169,6 +169,8 @@ class GrentonRuntime:
                 "alive": None,
                 "reply": None,
                 "last_seen": None,
+                "rtt_ms": None,
+                "timeouts": 0,
             }
             try:
                 host_ip = detect_local_ip(clu.ip)
@@ -355,12 +357,18 @@ class GrentonRuntime:
         conn = self._connections.get(serial)
         if conn is None:
             return None
+        start = self.hass.loop.time()
         reply = await conn.check_alive()
+        elapsed_ms = int((self.hass.loop.time() - start) * 1000)
         status = self._status.setdefault(serial, {"serial": serial})
         status["alive"] = reply is not None
         status["reply"] = reply
         if reply is not None:
             status["last_seen"] = time.time()
+            status["rtt_ms"] = elapsed_ms
+        else:
+            status["rtt_ms"] = None
+            status["timeouts"] = status.get("timeouts", 0) + 1
         self._ring.add(
             ts=time.time(),
             clu=serial,

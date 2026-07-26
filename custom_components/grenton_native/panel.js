@@ -44,10 +44,11 @@ class GrentonNativePanel extends HTMLElement {
     this._active = false;
     this._objects = [];
     this._observations = {}; // session -> { indices: number[], cell: HTMLElement }
-    this._rateWindow = [];
+    this._rateWindow = []; // [{t, clu}] recent inbound events, for pkt/s
     this._rateTimer = null;
+    this._statusTimer = null;
     this._mapVisible = []; // objects currently shown in the map (after filter)
-    this._visibleObs = {}; // session -> [{clu,obj,index}] for identify mode
+    this._visibleObs = {}; // session -> {keys, last} for identify mode
   }
 
   set hass(hass) {
@@ -59,6 +60,7 @@ class GrentonNativePanel extends HTMLElement {
       this._subscribe();
       this._loadObjects();
       this._rateTimer = setInterval(() => this._updateRate(), 1000);
+      this._statusTimer = setInterval(() => this._refreshStatus(), 15000);
     }
   }
 
@@ -71,13 +73,36 @@ class GrentonNativePanel extends HTMLElement {
       clearInterval(this._rateTimer);
       this._rateTimer = null;
     }
+    if (this._statusTimer) {
+      clearInterval(this._statusTimer);
+      this._statusTimer = null;
+    }
   }
 
   _updateRate() {
     const now = Date.now();
-    this._rateWindow = this._rateWindow.filter((t) => now - t < 1000);
+    this._rateWindow = this._rateWindow.filter((r) => now - r.t < 1000);
     const el = this.querySelector("#rate");
     if (el) el.textContent = `${this._rateWindow.length} pkt/s`;
+    const perClu = {};
+    this._rateWindow.forEach((r) => {
+      if (r.clu) perClu[r.clu] = (perClu[r.clu] || 0) + 1;
+    });
+    this.querySelectorAll(".card[data-clu]").forEach((card) => {
+      const span = card.querySelector(".clu-rate");
+      if (span) span.textContent = perClu[card.dataset.clu] || 0;
+    });
+  }
+
+  async _refreshStatus() {
+    try {
+      const snap = await this._hass.callWS({ type: "grenton_native/status" });
+      this._active = !!snap.active;
+      this._updateToggle();
+      this._renderClus(snap.clus || []);
+    } catch (err) {
+      /* transient; next tick retries */
+    }
   }
 
   _render() {
@@ -494,12 +519,15 @@ class GrentonNativePanel extends HTMLElement {
       const label = c.alive == null ? "?" : c.alive ? "online" : "offline";
       const card = document.createElement("div");
       card.className = "card";
+      card.dataset.clu = c.serial;
+      const rtt = c.rtt_ms == null ? "—" : `${c.rtt_ms} ms`;
       card.innerHTML = `
         <div class="name">${escapeHtml(c.object_name || c.serial)}</div>
         <div class="ip">${escapeHtml(c.ip || "?")} · port ${c.report_port}</div>
         <div class="badge" style="background:${color}">${label}${
           c.reply ? " · " + escapeHtml(String(c.reply)) : ""
         }</div>
+        <div class="sub" style="margin-top:6px">pkt/s: <b class="clu-rate">0</b> · RTT: <b>${rtt}</b> · timeouty: ${c.timeouts || 0}</div>
         <div style="margin-top:8px"><button class="btn" data-serial="${escapeHtml(c.serial)}">Ping</button></div>`;
       card.querySelector("button").addEventListener("click", async (ev) => {
         const serial = ev.target.getAttribute("data-serial");
@@ -559,7 +587,7 @@ class GrentonNativePanel extends HTMLElement {
     this._events.push(e);
     if (this._events.length > MAX_EVENTS) this._events.shift();
     this._routeReport(e);
-    if (live) this._rateWindow.push(Date.now());
+    if (live) this._rateWindow.push({ t: Date.now(), clu: e.clu });
     const tr = document.createElement("tr");
     const t = new Date((e.ts || 0) * 1000).toLocaleTimeString();
     const kindColor = KIND_COLOR[e.kind] || "#666";

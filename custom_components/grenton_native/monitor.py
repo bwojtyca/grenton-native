@@ -71,11 +71,16 @@ class GrentonRuntime:
         self._sessions: dict[str, int] = {}
         self._status: dict[str, dict[str, Any]] = {}
         self._checkalive_task: asyncio.Task | None = None
+        self._active = False
 
         # defaults (could later be made configurable from the panel)
         self._report_port_base = DEFAULT_REPORT_PORT_BASE
         self._checkalive_interval = DEFAULT_CHECKALIVE_INTERVAL
-        self._subscribe = True
+        # Quiet by default: only checkAlive on start. The CLU pushes a
+        # clientReport on every change of a subscribed feature, and its own
+        # clock/uptime change every second — so auto-subscribing floods the log.
+        # Observe deliberately via the panel's "Watch object" control instead.
+        self._subscribe = False
         self._indices = parse_indices(DEFAULT_INDICES)
 
     @property
@@ -144,8 +149,19 @@ class GrentonRuntime:
             if self._subscribe and self._indices:
                 await self._subscribe_clu(clu)
         self._checkalive_task = self.hass.loop.create_task(self._checkalive_loop())
+        self._active = True
+
+    async def async_start(self) -> None:
+        """(Re)start monitoring from the current or previously-uploaded project."""
+        if self._active:
+            return
+        if self._project is not None:
+            await self._start(self._project)
+        else:
+            await self.async_load_persisted()
 
     async def async_stop(self) -> None:
+        self._active = False
         if self._checkalive_task is not None:
             self._checkalive_task.cancel()
             self._checkalive_task = None
@@ -191,6 +207,7 @@ class GrentonRuntime:
     def snapshot(self) -> dict[str, Any]:
         return {
             "configured": self.configured,
+            "active": self._active,
             "clus": list(self._status.values()),
             "events": self._ring.snapshot_dicts(),
             "last_seq": self._ring.last_seq,

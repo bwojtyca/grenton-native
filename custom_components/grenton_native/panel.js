@@ -3,6 +3,7 @@
 // upload the .omp (drag & drop), watch CLU liveness and the live native wire log.
 
 const MAX_ROWS = 400;
+const MAX_EVENTS = 2000;
 
 const KIND_COLOR = {
   request: "#3b82f6",
@@ -34,6 +35,8 @@ class GrentonNativePanel extends HTMLElement {
     this._init = false;
     this._unsub = null;
     this._rows = [];
+    this._events = [];
+    this._active = false;
   }
 
   set hass(hass) {
@@ -118,8 +121,10 @@ class GrentonNativePanel extends HTMLElement {
 
         <div class="controls">
           <strong>Log komunikacji (na żywo)</strong>
-          <label style="font-size:12px"><input type="checkbox" id="follow" checked> auto-scroll</label>
+          <button class="btn" id="toggle">▶ Start</button>
+          <button class="btn" id="export">Eksportuj</button>
           <button class="btn" id="clear">Wyczyść</button>
+          <label style="font-size:12px"><input type="checkbox" id="follow" checked> auto-scroll</label>
         </div>
         <div class="logwrap">
           <table class="log">
@@ -153,9 +158,45 @@ class GrentonNativePanel extends HTMLElement {
     });
     this.querySelector("#clear").addEventListener("click", () => {
       this._rows = [];
+      this._events = [];
       this.querySelector("#log").innerHTML = "";
     });
     this.querySelector("#watch-btn").addEventListener("click", () => this._watch());
+    this.querySelector("#toggle").addEventListener("click", () => this._toggle());
+    this.querySelector("#export").addEventListener("click", () => this._export());
+  }
+
+  async _toggle() {
+    const btn = this.querySelector("#toggle");
+    btn.disabled = true;
+    try {
+      const snap = await this._hass.callWS({
+        type: "grenton_native/set_active",
+        active: !this._active,
+      });
+      this._applySnapshot(snap);
+    } catch (err) {
+      this._setStatus("błąd: " + (err.message || err));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  _updateToggle() {
+    const btn = this.querySelector("#toggle");
+    if (btn) btn.textContent = this._active ? "■ Stop" : "▶ Start";
+  }
+
+  _export() {
+    const blob = new Blob([JSON.stringify(this._events, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `grenton-native-log-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async _watch() {
@@ -216,13 +257,19 @@ class GrentonNativePanel extends HTMLElement {
 
   _applySnapshot(snap) {
     if (!snap) return;
+    this._active = !!snap.active;
+    this._updateToggle();
     this._renderClus(snap.clus || []);
     // rebuild the log from the snapshot
     this.querySelector("#log").innerHTML = "";
     this._rows = [];
+    this._events = [];
     (snap.events || []).forEach((e) => this._addRow(e, false));
+    const state = this._active ? "aktywny" : "zatrzymany";
     if (snap.configured) {
-      this._setStatus(`${(snap.clus || []).length} CLU · ${snap.last_seq || 0} zdarzeń`);
+      this._setStatus(
+        `${(snap.clus || []).length} CLU · ${snap.last_seq || 0} zdarzeń · ${state}`
+      );
     } else {
       this._setStatus("Brak projektu — przeciągnij plik .omp powyżej, aby zacząć.");
     }
@@ -269,6 +316,8 @@ class GrentonNativePanel extends HTMLElement {
   _addRow(e, live) {
     const tbody = this.querySelector("#log");
     if (!tbody) return;
+    this._events.push(e);
+    if (this._events.length > MAX_EVENTS) this._events.shift();
     const tr = document.createElement("tr");
     const t = new Date((e.ts || 0) * 1000).toLocaleTimeString();
     const kindColor = KIND_COLOR[e.kind] || "#666";

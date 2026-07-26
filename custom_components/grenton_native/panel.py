@@ -41,6 +41,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_check_alive)
     websocket_api.async_register_command(hass, ws_upload_omp)
     websocket_api.async_register_command(hass, ws_watch)
+    websocket_api.async_register_command(hass, ws_set_active)
 
     if not frontend.async_panel_exists(hass, PANEL_URL_PATH):
         frontend.async_register_built_in_panel(
@@ -140,6 +141,27 @@ async def ws_watch(hass, connection, msg) -> None:
         connection.send_error(msg["id"], "watch_failed", str(err))
         return
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "grenton_native/set_active",
+        vol.Required("active"): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_set_active(hass, connection, msg) -> None:
+    """Stop or (re)start monitoring without removing the integration."""
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
+        return
+    if msg["active"]:
+        await runtime.async_start()
+    else:
+        await runtime.async_stop()
+    connection.send_result(msg["id"], runtime.snapshot())
 
 
 @websocket_api.websocket_command(

@@ -1,9 +1,10 @@
-"""Runtime that keeps native sessions to the CLUs and feeds the monitor panel.
+"""Runtime that owns the native CLU sessions and feeds the monitor panel.
 
-One :class:`~.native.client.GrentonCluConnection` per CLU (each with its own
-report port so multiple CLUs don't fight over one UDP port). Every wire event is
-appended to a bounded ring and broadcast to any subscribed websocket clients.
-A periodic ``checkAlive`` tracks liveness.
+Restartable at runtime: the panel can upload a new ``.omp`` at any time, which
+stops the current sessions and starts fresh ones. One
+:class:`~.native.client.GrentonCluConnection` per CLU (each with its own report
+port). Every wire event is appended to a bounded ring and broadcast to subscribed
+websocket clients; a periodic ``checkAlive`` tracks liveness.
 
 Read-only toward Grenton: checkAlive + clientRegister/Report + clientDestroy.
 """
@@ -15,17 +16,24 @@ import logging
 import secrets
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .const import EVENT_RING_SIZE
+from .const import (
+    DEFAULT_CHECKALIVE_INTERVAL,
+    DEFAULT_INDICES,
+    DEFAULT_REPORT_PORT_BASE,
+    DOMAIN,
+    EVENT_RING_SIZE,
+    PROJECT_FILENAME,
+)
 from .native import events
 from .native.cipher import GrentonCipher
 from .native.client import GrentonCluConnection, detect_local_ip
+from .native.omp import OmpProject, load_omp
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-
-    from .native.omp import OmpProject
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,36 +55,66 @@ def parse_indices(spec: str) -> list[int]:
     return out
 
 
-class GrentonMonitor:
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        project: OmpProject,
-        *,
-        report_port_base: int,
-        checkalive_interval: int,
-        subscribe: bool,
-        indices: str,
-    ) -> None:
+class GrentonRuntime:
+    """Single, restartable runtime shared by the panel websocket commands."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self._project = project
-        self._report_port_base = report_port_base
-        self._checkalive_interval = checkalive_interval
-        self._subscribe = subscribe
-        self._indices = parse_indices(indices)
-        self._cipher = GrentonCipher(project.cipher_key, project.cipher_iv)
+        self._persist_path = hass.config.path(DOMAIN, PROJECT_FILENAME)
 
         self._ring = events.EventRing(EVENT_RING_SIZE)
         self._subscribers: set[Subscriber] = set()
+
+        self._project: OmpProject | None = None
+        self._cipher: GrentonCipher | None = None
         self._connections: dict[str, GrentonCluConnection] = {}
         self._sessions: dict[str, int] = {}
         self._status: dict[str, dict[str, Any]] = {}
         self._checkalive_task: asyncio.Task | None = None
 
+        # defaults (could later be made configurable from the panel)
+        self._report_port_base = DEFAULT_REPORT_PORT_BASE
+        self._checkalive_interval = DEFAULT_CHECKALIVE_INTERVAL
+        self._subscribe = True
+        self._indices = parse_indices(DEFAULT_INDICES)
+
+    @property
+    def configured(self) -> bool:
+        return self._project is not None
+
     # ── lifecycle ─────────────────────────────────────────────────────────
 
-    async def async_start(self) -> None:
-        clus = [c for c in self._project.clus if c.ip]
+    async def async_load_persisted(self) -> None:
+        """Auto-start from a previously uploaded project, if present."""
+        path = Path(self._persist_path)
+        if not path.exists():
+            return
+        try:
+            project = await self.hass.async_add_executor_job(load_omp, str(path))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not load persisted project: %s", err)
+            return
+        await self._start(project)
+
+    async def async_upload(self, omp_bytes: bytes) -> OmpProject:
+        """Persist an uploaded .omp, then (re)start sessions from it."""
+
+        def _save_and_load() -> OmpProject:
+            path = Path(self._persist_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(omp_bytes)
+            return load_omp(str(path))
+
+        project = await self.hass.async_add_executor_job(_save_and_load)
+        await self.async_stop()
+        await self._start(project)
+        return project
+
+    async def _start(self, project: OmpProject) -> None:
+        self._project = project
+        self._cipher = GrentonCipher(project.cipher_key, project.cipher_iv)
+        self._status = {}
+        clus = [c for c in project.clus if c.ip]
         for index, clu in enumerate(clus):
             report_port = self._report_port_base + index
             self._status[clu.serial] = {
@@ -102,11 +140,9 @@ class GrentonMonitor:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.error("[%s] failed to open connection: %s", clu.serial, err)
                 continue
-
             await self._do_check_alive(clu.serial)
             if self._subscribe and self._indices:
                 await self._subscribe_clu(clu)
-
         self._checkalive_task = self.hass.loop.create_task(self._checkalive_loop())
 
     async def async_stop(self) -> None:
@@ -122,6 +158,7 @@ class GrentonMonitor:
                 pass
             conn.close()
         self._connections.clear()
+        self._sessions.clear()
 
     # ── event plumbing ────────────────────────────────────────────────────
 
@@ -153,6 +190,7 @@ class GrentonMonitor:
 
     def snapshot(self) -> dict[str, Any]:
         return {
+            "configured": self.configured,
             "clus": list(self._status.values()),
             "events": self._ring.snapshot_dicts(),
             "last_seq": self._ring.last_seq,
@@ -171,8 +209,8 @@ class GrentonMonitor:
         status = self._status.setdefault(serial, {"serial": serial})
         status["alive"] = reply is not None
         status["reply"] = reply
-        status["last_seen"] = time.time() if reply is not None else status.get("last_seen")
-        # surface liveness as a status event too
+        if reply is not None:
+            status["last_seen"] = time.time()
         self._ring.add(
             ts=time.time(),
             clu=serial,

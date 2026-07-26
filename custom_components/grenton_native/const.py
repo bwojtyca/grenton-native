@@ -14,3 +14,7 @@ DEFAULT_REPORT_PORT_BASE = 4344
 DEFAULT_CHECKALIVE_INTERVAL = 30  # seconds
 DEFAULT_INDICES = "0-15"
 EVENT_RING_SIZE = 500
+
+# Where an uploaded project is persisted (under the HA config dir), so it
+# survives restarts and is re-read without re-uploading.
+PROJECT_FILENAME = "project.omp"

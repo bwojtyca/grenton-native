@@ -1,6 +1,9 @@
 """Grenton Native — a spike integration that talks to CLUs over the native
-encrypted UDP protocol (keyed from the Object Manager ``.omp``) and exposes a
-live communication-monitor panel.
+encrypted UDP protocol and exposes a live communication-monitor panel.
+
+The integration itself is configuration-free: adding it just registers the
+panel. Everything else — uploading the Object Manager ``.omp`` and watching the
+live communication — happens inside the panel.
 
 Import-time is kept Home-Assistant-free (all HA imports are lazy, inside the
 setup functions) so the ``native`` protocol package can also be used standalone
@@ -12,17 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import (
-    CONF_CHECKALIVE_INTERVAL,
-    CONF_INDICES,
-    CONF_OMP_PATH,
-    CONF_REPORT_PORT_BASE,
-    CONF_SUBSCRIBE,
-    DEFAULT_CHECKALIVE_INTERVAL,
-    DEFAULT_INDICES,
-    DEFAULT_REPORT_PORT_BASE,
-    DOMAIN,
-)
+from .const import DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -30,42 +23,26 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+RUNTIME_KEY = "runtime"
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    from .monitor import GrentonMonitor
-    from .native.omp import load_omp
+    from .monitor import GrentonRuntime
     from .panel import async_setup_panel
 
-    path = entry.data[CONF_OMP_PATH]
-    try:
-        project = await hass.async_add_executor_job(load_omp, path)
-    except Exception as err:  # noqa: BLE001 - surface as a setup failure
-        _LOGGER.error("Failed to load .omp %s: %s", path, err)
-        return False
+    runtime = GrentonRuntime(hass)
+    hass.data.setdefault(DOMAIN, {})[RUNTIME_KEY] = runtime
 
-    monitor = GrentonMonitor(
-        hass,
-        project,
-        report_port_base=entry.data.get(CONF_REPORT_PORT_BASE, DEFAULT_REPORT_PORT_BASE),
-        checkalive_interval=entry.data.get(
-            CONF_CHECKALIVE_INTERVAL, DEFAULT_CHECKALIVE_INTERVAL
-        ),
-        subscribe=entry.data.get(CONF_SUBSCRIBE, True),
-        indices=entry.data.get(CONF_INDICES, DEFAULT_INDICES),
-    )
-    await monitor.async_start()
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = monitor
     await async_setup_panel(hass)
+    # Auto-start if a project was uploaded in a previous session.
+    await runtime.async_load_persisted()
 
-    _LOGGER.info(
-        "Grenton Native started: %d CLU(s) from %s", len(project.clus), path
-    )
+    _LOGGER.info("Grenton Native panel ready (configured=%s)", runtime.configured)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    monitor = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    if monitor is not None:
-        await monitor.async_stop()
+    runtime = hass.data.get(DOMAIN, {}).pop(RUNTIME_KEY, None)
+    if runtime is not None:
+        await runtime.async_stop()
     return True

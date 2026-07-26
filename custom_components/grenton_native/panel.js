@@ -361,7 +361,7 @@ class GrentonNativePanel extends HTMLElement {
   }
 
   async _toggle() {
-    const btn = this.querySelector("#toggle");
+    const btn = this.querySelector("#conn-toggle");
     btn.disabled = true;
     try {
       const snap = await this._hass.callWS({

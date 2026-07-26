@@ -27,7 +27,7 @@ from .const import (
     EVENT_RING_SIZE,
     PROJECT_FILENAME,
 )
-from .native import events
+from .native import events, mapping
 from .native.cipher import GrentonCipher
 from .native.client import GrentonCluConnection, detect_local_ip
 from .native.omp import OmpProject, load_omp
@@ -212,6 +212,42 @@ class GrentonRuntime:
             "events": self._ring.snapshot_dicts(),
             "last_seq": self._ring.last_seq,
         }
+
+    def objects_map(self) -> list[dict[str, Any]]:
+        """The .omp object inventory with built-in features/events + a proposed
+        HA domain — the data behind the panel's object map. Heavy, so served on
+        demand (not in the frequently-polled status snapshot)."""
+        if self._project is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for obj in self._project.objects:
+            proposal = mapping.propose(obj.grenton_id, obj.type)
+            out.append(
+                {
+                    "grenton_id": obj.grenton_id,
+                    "obj_id": obj.obj_id,
+                    "clu": obj.clu,
+                    "name": obj.name,
+                    "type": obj.type,
+                    "domain": proposal["domain"],
+                    "note": proposal["note"],
+                    "features": [
+                        {
+                            "name": f.name,
+                            "index": f.index,
+                            "param_type": f.param_type,
+                            "unit": f.unit,
+                            "access": f.access,
+                            "constraint": f.constraint,
+                            "init": f.init_value,
+                            "visible": f.visible,
+                        }
+                        for f in obj.features
+                    ],
+                    "events": [e.name for e in obj.events],
+                }
+            )
+        return out
 
     # ── actions ───────────────────────────────────────────────────────────
 

@@ -42,6 +42,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_upload_omp)
     websocket_api.async_register_command(hass, ws_watch)
     websocket_api.async_register_command(hass, ws_set_active)
+    websocket_api.async_register_command(hass, ws_objects)
 
     # Cache-bust the ES module URL with the file's mtime — HA/browsers cache the
     # panel module aggressively by URL, so a fixed URL keeps serving a stale
@@ -171,6 +172,18 @@ async def ws_set_active(hass, connection, msg) -> None:
     else:
         await runtime.async_stop()
     connection.send_result(msg["id"], runtime.snapshot())
+
+
+@websocket_api.websocket_command({vol.Required("type"): "grenton_native/objects"})
+@websocket_api.require_admin
+@callback
+def ws_objects(hass, connection, msg) -> None:
+    """The .omp object map (objects + built-in features + events)."""
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
+        return
+    connection.send_result(msg["id"], {"objects": runtime.objects_map()})
 
 
 @websocket_api.websocket_command(

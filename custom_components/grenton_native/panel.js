@@ -37,6 +37,7 @@ class GrentonNativePanel extends HTMLElement {
     this._rows = [];
     this._events = [];
     this._active = false;
+    this._objects = [];
   }
 
   set hass(hass) {
@@ -46,6 +47,7 @@ class GrentonNativePanel extends HTMLElement {
       this._render();
       this._load();
       this._subscribe();
+      this._loadObjects();
     }
   }
 
@@ -109,6 +111,14 @@ class GrentonNativePanel extends HTMLElement {
 
         <div class="clus" id="clus"></div>
 
+        <h2 style="font-size:16px; margin:6px 0">
+          Mapa obiektów <span class="sub" id="map-count"></span>
+        </h2>
+        <div class="controls">
+          <input id="map-search" placeholder="filtruj: nazwa / grenton_id / typ / domena" style="min-width:320px">
+        </div>
+        <div id="map" class="logwrap" style="max-height:48vh; margin-bottom:16px"></div>
+
         <div class="watch">
           <strong>Obserwuj obiekt:</strong>
           <select id="watch-clu"></select>
@@ -164,6 +174,129 @@ class GrentonNativePanel extends HTMLElement {
     this.querySelector("#watch-btn").addEventListener("click", () => this._watch());
     this.querySelector("#toggle").addEventListener("click", () => this._toggle());
     this.querySelector("#export").addEventListener("click", () => this._export());
+    this.querySelector("#map-search").addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      const list = !q
+        ? this._objects
+        : this._objects.filter(
+            (o) =>
+              (o.name || "").toLowerCase().includes(q) ||
+              o.grenton_id.toLowerCase().includes(q) ||
+              (o.type || "").toLowerCase().includes(q) ||
+              (o.domain || "").includes(q)
+          );
+      this._renderMap(list);
+    });
+  }
+
+  async _loadObjects() {
+    try {
+      const res = await this._hass.callWS({ type: "grenton_native/objects" });
+      this._objects = res.objects || [];
+      this._renderMap(this._objects);
+    } catch (err) {
+      /* map stays empty until a project is uploaded */
+    }
+  }
+
+  _renderMap(list) {
+    const el = this.querySelector("#map");
+    const count = this.querySelector("#map-count");
+    if (!el) return;
+    if (count) count.textContent = `· ${list.length} obiektów`;
+    el.innerHTML = "";
+    const table = document.createElement("table");
+    table.className = "log";
+    table.innerHTML =
+      "<thead><tr><th>nazwa</th><th>grenton_id</th><th>typ</th>" +
+      "<th>→ HA</th><th>cechy</th><th>zdarz.</th><th></th></tr></thead>";
+    const tbody = document.createElement("tbody");
+    list.forEach((o) => {
+      const row = document.createElement("tr");
+      row.style.cursor = "pointer";
+      row.innerHTML = `
+        <td>${escapeHtml(o.name || "")}</td>
+        <td>${escapeHtml(o.grenton_id)}</td>
+        <td>${escapeHtml(o.type || "")}</td>
+        <td>${escapeHtml(o.domain || "")}</td>
+        <td>${o.features.length}</td>
+        <td>${o.events.length}</td>
+        <td class="exp">▸</td>`;
+      const detailRow = document.createElement("tr");
+      detailRow.style.display = "none";
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      detailRow.appendChild(cell);
+      row.addEventListener("click", () => {
+        const open = detailRow.style.display !== "none";
+        detailRow.style.display = open ? "none" : "";
+        row.querySelector(".exp").textContent = open ? "▸" : "▾";
+        if (!open && !cell.dataset.filled) {
+          cell.innerHTML = this._objectDetail(o);
+          cell.dataset.filled = "1";
+          this._wireObserve(cell, o);
+        }
+      });
+      tbody.appendChild(row);
+      tbody.appendChild(detailRow);
+    });
+    table.appendChild(tbody);
+    el.appendChild(table);
+  }
+
+  _objectDetail(o) {
+    const feats = o.features
+      .map(
+        (f) =>
+          `<tr><td>${f.index ?? ""}</td><td>${escapeHtml(f.name)}</td>` +
+          `<td>${escapeHtml(f.param_type || "")}</td><td>${escapeHtml(f.unit || "")}</td>` +
+          `<td>${escapeHtml(f.access || "")}</td><td>${escapeHtml(f.constraint || "")}</td></tr>`
+      )
+      .join("");
+    const events = o.events.length
+      ? o.events
+          .map((e) => `<span class="kind" style="background:#8b5cf6">${escapeHtml(e)}</span>`)
+          .join(" ")
+      : '<em class="sub">brak</em>';
+    return `
+      <div style="padding:8px 4px">
+        <div style="margin-bottom:6px">
+          <strong>Cechy wbudowane</strong>
+          <button class="btn" data-observe="1">Obserwuj cechy</button>
+        </div>
+        <table class="log">
+          <thead><tr><th>idx</th><th>nazwa</th><th>typ</th><th>jedn.</th><th>dostęp</th><th>ograniczenie</th></tr></thead>
+          <tbody>${feats}</tbody>
+        </table>
+        <div style="margin-top:10px"><strong>Zdarzenia (callbacki)</strong>
+          <div style="margin-top:4px">${events}</div></div>
+        <div style="margin-top:10px"><strong>Metody / sterowanie</strong>
+          <span class="sub">— wkrótce, na razie wyłączone dla bezpieczeństwa</span></div>
+      </div>`;
+  }
+
+  _wireObserve(cell, o) {
+    const btn = cell.querySelector("[data-observe]");
+    if (!btn) return;
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const idxs = o.features.filter((f) => f.index != null).map((f) => f.index);
+      if (!idxs.length || !o.clu) return;
+      btn.disabled = true;
+      try {
+        await this._hass.callWS({
+          type: "grenton_native/watch",
+          serial: o.clu,
+          object: o.obj_id,
+          indices: idxs.join(","),
+        });
+        this._setStatus(`Obserwuję cechy ${o.obj_id} [${idxs.join(",")}] — wartości w logu poniżej`);
+      } catch (err) {
+        this._setStatus("błąd: " + (err.message || err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
   }
 
   async _toggle() {
@@ -250,6 +383,7 @@ class GrentonNativePanel extends HTMLElement {
         omp_base64: b64,
       });
       this._applySnapshot(snap);
+      this._loadObjects();
     } catch (err) {
       this._setStatus("Błąd wgrywania: " + (err.message || err));
     }

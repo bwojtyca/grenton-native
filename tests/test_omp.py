@@ -20,8 +20,9 @@ PROPERTIES_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 </ProjectProperties>
 """.encode()
 
-# One CLU node (nameOnCLU + ipAddress) and one device object (nameOnCLU only) —
-# the device must NOT be mistaken for a CLU.
+# One CLU node (nameOnCLU + ipAddress), plus a device object nested under a CLU
+# tree container so grenton_id gets the CLU prefix. The device carries a built-in
+# feature and an event, mirroring the real .omp structure.
 SYSTEM_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <Project>
   <TreeObject>
@@ -33,10 +34,31 @@ SYSTEM_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
     </specificObject>
   </TreeObject>
   <TreeObject>
-    <specificObject>
-      <nameOnCLU>DOU1234</nameOnCLU>
-      <type>DOUT</type>
-    </specificObject>
+    <name>CLU221011038_clu</name>
+    <children>
+      <TreeObject>
+        <specificObject>
+          <name>Lampa salon</name>
+          <nameOnCLU>DOU1234</nameOnCLU>
+          <type>DOUT</type>
+          <features>
+            <EmbeddedFeature>
+              <name>Value</name>
+              <type><paramType>NUMBER</paramType></type>
+              <accessType>ALL</accessType>
+              <unit>bool</unit>
+              <index>0</index>
+              <constrainAsString>{0,1}</constrainAsString>
+              <initValue>0</initValue>
+              <visible>true</visible>
+            </EmbeddedFeature>
+          </features>
+          <events>
+            <Event><name>OnSwitchOn</name></Event>
+          </events>
+        </specificObject>
+      </TreeObject>
+    </children>
   </TreeObject>
 </Project>
 """
@@ -100,3 +122,33 @@ def test_missing_member_raises():
         z.writestr("properties.xml", PROPERTIES_XML)  # no system.xml
     with pytest.raises(ValueError, match="system.xml not found"):
         load_omp_bytes(buf.getvalue())
+
+
+def test_parses_object_with_features_and_events():
+    project = load_omp_bytes(_make_omp())
+    assert len(project.objects) == 1
+    obj = project.objects[0]
+    assert obj.grenton_id == "CLU221011038->DOU1234"
+    assert obj.obj_id == "DOU1234"
+    assert obj.clu == "CLU221011038"
+    assert obj.type == "DOUT"
+    assert obj.name == "Lampa salon"
+
+    assert len(obj.features) == 1
+    value = obj.features[0]
+    assert value.name == "Value"
+    assert value.index == 0
+    assert value.param_type == "NUMBER"
+    assert value.unit == "bool"
+    assert value.access == "ALL"
+    assert value.constraint == "{0,1}"
+    assert value.visible is True
+
+    assert [e.name for e in obj.events] == ["OnSwitchOn"]
+
+
+def test_the_clu_node_is_not_parsed_as_an_object():
+    # The <clu> hardware node has nameOnCLU "221011038" but must not appear as a
+    # controllable object (it isn't an object-id prefix and is filtered out).
+    project = load_omp_bytes(_make_omp())
+    assert all(not o.obj_id.startswith("CLU") for o in project.objects)

@@ -1,13 +1,13 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "grenton-native"
 version = "0.0.1"
-description = "Clean-room client for Grenton's native CLU UDP protocol, keyed from the Object Manager project (.omp)."
+description = "Clean-room client for Grenton's native CLU UDP protocol (keyed from the OM .omp), packaged as a Home Assistant custom integration with a live communication-monitor panel."
 readme = "README.md"
 requires-python = ">=3.11"
+
+# Runtime deps of the protocol library. Home Assistant already ships cryptography,
+# so the integration's manifest lists no requirements; this is for standalone use
+# (the spike) and for CI.
 dependencies = [
     "cryptography>=42",
 ]
@@ -15,16 +15,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "pytest-asyncio>=0.23",
     "ruff>=0.6",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/grenton_native"]
-
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-asyncio_mode = "auto"
+# Import the integration as `custom_components.grenton_native.*` from the repo root.
+pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.ruff]

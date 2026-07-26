@@ -20,17 +20,18 @@ import secrets
 import sys
 from pathlib import Path
 
-# Allow running straight from the repo without installing.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Allow running straight from the repo without installing (and without Home
+# Assistant — the integration package's __init__ is HA-free at import time).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from grenton_native.cipher import GrentonCipher  # noqa: E402
-from grenton_native.client import (  # noqa: E402
+from custom_components.grenton_native.native.cipher import GrentonCipher  # noqa: E402
+from custom_components.grenton_native.native.client import (  # noqa: E402
     DEFAULT_REPORT_PORT,
     GrentonCluConnection,
     detect_local_ip,
 )
-from grenton_native.omp import load_omp  # noqa: E402
-from grenton_native.protocol import Response  # noqa: E402
+from custom_components.grenton_native.native.omp import load_omp  # noqa: E402
+from custom_components.grenton_native.native.protocol import Response  # noqa: E402
 
 _LOGGER = logging.getLogger("spike")
 

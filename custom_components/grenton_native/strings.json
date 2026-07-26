@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Grenton Native",
+        "description": "Point at an Object Manager .omp on the Home Assistant host. It provides the project AES key and the CLU list. The file stays on disk; only its path is stored.",
+        "data": {
+          "omp_path": "Path to the .omp file",
+          "report_port_base": "Report port (base)",
+          "checkalive_interval": "checkAlive interval (seconds)",
+          "subscribe": "Subscribe to live state (clientRegister)",
+          "indices": "Feature indices to subscribe (e.g. 0-15)"
+        }
+      }
+    },
+    "error": {
+      "not_found": "No file at that path.",
+      "invalid_omp": "Could not read the .omp (not a valid project, or key/CLU data missing — is the project open in Object Manager?)."
+    },
+    "abort": {
+      "already_configured": "This .omp is already configured."
+    }
+  }
+}

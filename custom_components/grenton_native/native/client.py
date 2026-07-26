@@ -19,7 +19,7 @@ import logging
 import socket
 from collections.abc import Callable
 
-from . import protocol
+from . import events, protocol
 from .cipher import GrentonCipher
 from .protocol import Response
 
@@ -29,6 +29,8 @@ COMMAND_PORT = 1234
 DEFAULT_REPORT_PORT = 4344
 
 ReportCallback = Callable[[int, list[protocol.LuaValue], Response], None]
+# (direction, kind, msg_id, summary, detail)
+EventHook = Callable[[str, str, "str | None", str, object], None]
 
 
 def detect_local_ip(target_ip: str, target_port: int = COMMAND_PORT) -> str:
@@ -78,6 +80,23 @@ class GrentonCluConnection:
         self._report_cb: ReportCallback | None = None
         self._cmd_transport: asyncio.DatagramTransport | None = None
         self._report_transport: asyncio.DatagramTransport | None = None
+        # Optional observer for every wire event (used by the live monitor).
+        self.on_event: EventHook | None = None
+
+    def _emit(
+        self,
+        direction: str,
+        kind: str,
+        msg_id: str | None,
+        summary: str,
+        detail: object = None,
+    ) -> None:
+        if self.on_event is None:
+            return
+        try:
+            self.on_event(direction, kind, msg_id, summary, detail)
+        except Exception:  # noqa: BLE001 - an observer must never break I/O
+            _LOGGER.exception("on_event hook raised")
 
     async def open(self) -> None:
         loop = asyncio.get_running_loop()
@@ -117,11 +136,13 @@ class GrentonCluConnection:
         fut: asyncio.Future[Response] = loop.create_future()
         self._pending[msg_id] = fut
         _LOGGER.debug("→ %s", raw.strip())
+        self._emit(events.DIRECTION_OUT, events.KIND_REQUEST, msg_id, payload)
         self._cmd_transport.sendto(self._cipher.encrypt(raw.encode()))
         try:
             return await asyncio.wait_for(fut, timeout)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             _LOGGER.warning("request timed out (msg_id=%s): %s", msg_id, payload)
+            self._emit(events.DIRECTION_IN, events.KIND_ERROR, msg_id, f"timeout: {payload}")
             return None
         finally:
             self._pending.pop(msg_id, None)
@@ -160,6 +181,10 @@ class GrentonCluConnection:
         plaintext = self._cipher.decrypt(data)
         if plaintext is None:
             _LOGGER.warning("undecryptable datagram from %s (%d bytes)", addr, len(data))
+            self._emit(
+                events.DIRECTION_IN, events.KIND_ERROR, None,
+                f"undecryptable {len(data)} bytes from {addr[0]}",
+            )
             return
         text = plaintext.decode("utf-8", "replace").strip()
         resp = protocol.parse_response(text)
@@ -172,11 +197,15 @@ class GrentonCluConnection:
         if fut is not None and not fut.done():
             fut.set_result(resp)
 
-        if resp.is_client_report and self._report_cb is not None:
+        if resp.is_client_report:
             parsed = protocol.parse_client_report(resp.payload)
-            if parsed is not None:
-                session, values = parsed
+            values = parsed[1] if parsed else None
+            self._emit(events.DIRECTION_IN, events.KIND_REPORT, resp.msg_id, resp.payload, values)
+            if parsed is not None and self._report_cb is not None:
+                session, report_values = parsed
                 try:
-                    self._report_cb(session, values, resp)
+                    self._report_cb(session, report_values, resp)
                 except Exception:  # noqa: BLE001 - never let a callback kill the loop
                     _LOGGER.exception("report callback raised")
+        else:
+            self._emit(events.DIRECTION_IN, events.KIND_RESPONSE, resp.msg_id, resp.payload)

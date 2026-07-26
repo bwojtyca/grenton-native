@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from grenton_native.omp import load_omp_bytes
+from custom_components.grenton_native.native.omp import load_omp_bytes
 
 DUMMY_KEY = b"\x00" * 16
 DUMMY_IV = b"\x11" * 16

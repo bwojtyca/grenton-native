@@ -1,5 +1,8 @@
 # grenton-native
 
+[![CI](https://github.com/bwojtyca/grenton-native/actions/workflows/ci.yml/badge.svg)](https://github.com/bwojtyca/grenton-native/actions/workflows/ci.yml)
+[![Validate](https://github.com/bwojtyca/grenton-native/actions/workflows/validate.yml/badge.svg)](https://github.com/bwojtyca/grenton-native/actions/workflows/validate.yml)
+
 A **clean-room** Python client for Grenton's *native* CLU protocol — the encrypted
 UDP channel that Object Manager and the MyGrenton mobile app use to talk to CLUs
 directly, **without the HTTP Gate**.
@@ -32,21 +35,45 @@ carries no vendor support. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 ## Layout
 
 ```
-src/grenton_native/
-  cipher.py     # AES-128-CBC / PKCS7 (the CLU command-channel scheme)
-  omp.py        # read cipher key/IV + CLU topology from a .omp
-  protocol.py   # wire message encode/decode (req/resp, clientRegister/Report)
-  client.py     # asyncio UDP client (cmd→1234, report listener→4344)
-spikes/
-  spike_listen.py   # run against real hardware: checkAlive + live subscription
-tests/          # offline unit tests (cipher, protocol, .omp parsing)
+custom_components/grenton_native/      # Home Assistant custom integration
+  __init__.py        # setup (HA-free at import time)
+  config_flow.py     # point at a .omp on the host
+  monitor.py         # runtime: sessions + event ring + checkAlive loop
+  panel.py           # sidebar panel + websocket API
+  panel.js           # live communication-monitor UI (vanilla, no build step)
+  native/            # ← the protocol library (HA-free, reusable, tested)
+    cipher.py        #   AES-128-CBC / PKCS7 (the CLU command-channel scheme)
+    omp.py           #   read cipher key/IV + CLU topology from a .omp
+    protocol.py      #   wire encode/decode (req/resp, clientRegister/Report)
+    client.py        #   asyncio UDP client (cmd→1234, report listener→4344)
+    events.py        #   WireEvent + bounded EventRing for the monitor
+spikes/spike_listen.py   # standalone: checkAlive + live subscription (no HA)
+tests/                   # offline unit tests (cipher, protocol, omp, events)
+.github/workflows/       # CI: ruff + pytest · Validate: hassfest + HACS
 docs/PROTOCOL.md
 ```
 
-## Running the spike (against your own hardware)
+The `native/` package has **no Home Assistant dependency** and the integration's
+`__init__.py` keeps all HA imports lazy — so the same protocol code powers both
+the HA integration and the standalone spike, and CI can test it without HA.
+
+## Run inside Home Assistant (recommended)
+
+Your HA host is already on the Grenton LAN, so this is the easiest way to try it.
+
+1. Copy `custom_components/grenton_native/` into your HA `config/custom_components/`
+   (or add this repo to HACS as a custom repository, category *Integration*).
+2. Put your Object Manager project on the host, e.g. `config/grenton_native/project.omp`.
+3. **Settings → Devices & Services → Add Integration → “Grenton Native”**, and give
+   it the `.omp` path.
+4. Open the **Grenton Native** entry in the sidebar — the panel shows each CLU's
+   liveness and a **live stream of the native communication** (requests,
+   responses, `clientReport` pushes), with a per-CLU *Ping* button.
+
+## Running the standalone spike (no Home Assistant)
 
 ```bash
-python -m pip install -e '.[dev]'           # or: pip install cryptography
+pip install cryptography
 python spikes/spike_listen.py --omp /path/to/project.omp -v
 ```
 

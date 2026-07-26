@@ -1,6 +1,10 @@
 import pytest
 
-from grenton_native.cipher import DEFAULT_IV_B64, DEFAULT_KEY_B64, GrentonCipher
+from custom_components.grenton_native.native.cipher import (
+    DEFAULT_IV_B64,
+    DEFAULT_KEY_B64,
+    GrentonCipher,
+)
 
 
 def test_round_trip_default():

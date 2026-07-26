@@ -1,4 +1,4 @@
-from grenton_native import protocol as p
+from custom_components.grenton_native.native import protocol as p
 
 
 def test_build_request_format():

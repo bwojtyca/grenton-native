@@ -4,6 +4,10 @@
 
 const MAX_ROWS = 400;
 const MAX_EVENTS = 2000;
+// Bump on every panel.js change and shown in the header, so you can tell at a
+// glance whether Home Assistant is serving the latest panel (vs a cached/stale
+// copy). Expected build is called out in chat when it changes.
+const PANEL_BUILD = "h1";
 
 const KIND_COLOR = {
   request: "#3b82f6",
@@ -152,6 +156,7 @@ class GrentonNativePanel extends HTMLElement {
           <button class="btn" id="conn-toggle">⏻</button>
           <span class="badge" id="conn-pill" style="margin:0">—</span>
           <span class="sub" id="rate">0 pkt/s</span>
+          <span class="sub" title="wersja panelu — porównaj z oczekiwaną">build ${PANEL_BUILD}</span>
         </div>
         <div class="sub" id="status">Ładowanie…</div>
 

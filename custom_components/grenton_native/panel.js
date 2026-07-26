@@ -28,6 +28,11 @@ function escapeHtml(s) {
   );
 }
 
+function fmtVal(v) {
+  if (v === null || v === undefined) return "nil";
+  return String(v);
+}
+
 class GrentonNativePanel extends HTMLElement {
   constructor() {
     super();
@@ -38,6 +43,7 @@ class GrentonNativePanel extends HTMLElement {
     this._events = [];
     this._active = false;
     this._objects = [];
+    this._observations = {}; // session -> { indices: number[], cell: HTMLElement }
   }
 
   set hass(hass) {
@@ -250,7 +256,8 @@ class GrentonNativePanel extends HTMLElement {
         (f) =>
           `<tr><td>${f.index ?? ""}</td><td>${escapeHtml(f.name)}</td>` +
           `<td>${escapeHtml(f.param_type || "")}</td><td>${escapeHtml(f.unit || "")}</td>` +
-          `<td>${escapeHtml(f.access || "")}</td><td>${escapeHtml(f.constraint || "")}</td></tr>`
+          `<td>${escapeHtml(f.access || "")}</td><td>${escapeHtml(f.constraint || "")}</td>` +
+          `<td class="fval"${f.index != null ? ` data-idx="${f.index}"` : ""}>—</td></tr>`
       )
       .join("");
     const events = o.events.length
@@ -265,7 +272,7 @@ class GrentonNativePanel extends HTMLElement {
           <button class="btn" data-observe="1">Obserwuj cechy</button>
         </div>
         <table class="log">
-          <thead><tr><th>idx</th><th>nazwa</th><th>typ</th><th>jedn.</th><th>dostęp</th><th>ograniczenie</th></tr></thead>
+          <thead><tr><th>idx</th><th>nazwa</th><th>typ</th><th>jedn.</th><th>dostęp</th><th>ograniczenie</th><th>wartość</th></tr></thead>
           <tbody>${feats}</tbody>
         </table>
         <div style="margin-top:10px"><strong>Zdarzenia (callbacki)</strong>
@@ -284,13 +291,16 @@ class GrentonNativePanel extends HTMLElement {
       if (!idxs.length || !o.clu) return;
       btn.disabled = true;
       try {
-        await this._hass.callWS({
+        const res = await this._hass.callWS({
           type: "grenton_native/watch",
           serial: o.clu,
           object: o.obj_id,
           indices: idxs.join(","),
         });
-        this._setStatus(`Obserwuję cechy ${o.obj_id} [${idxs.join(",")}] — wartości w logu poniżej`);
+        if (res && res.session != null) {
+          this._observations[res.session] = { indices: idxs, cell };
+        }
+        this._setStatus(`Obserwuję cechy ${o.obj_id} [${idxs.join(",")}] — wartości aktualizują się w tabeli`);
       } catch (err) {
         this._setStatus("błąd: " + (err.message || err));
       } finally {
@@ -447,11 +457,27 @@ class GrentonNativePanel extends HTMLElement {
     });
   }
 
+  _routeReport(e) {
+    if (e.kind !== "report" || !Array.isArray(e.detail)) return;
+    const m = /clientReport:(\d+):/.exec(e.summary || "");
+    if (!m) return;
+    const obs = this._observations[Number(m[1])];
+    if (!obs) return;
+    obs.indices.forEach((idx, i) => {
+      const cell = obs.cell.querySelector(`.fval[data-idx="${idx}"]`);
+      if (cell) {
+        cell.textContent = fmtVal(e.detail[i]);
+        cell.style.color = "var(--primary-color, #03a9f4)";
+      }
+    });
+  }
+
   _addRow(e, live) {
     const tbody = this.querySelector("#log");
     if (!tbody) return;
     this._events.push(e);
     if (this._events.length > MAX_EVENTS) this._events.shift();
+    this._routeReport(e);
     const tr = document.createElement("tr");
     const t = new Date((e.ts || 0) * 1000).toLocaleTimeString();
     const kindColor = KIND_COLOR[e.kind] || "#666";

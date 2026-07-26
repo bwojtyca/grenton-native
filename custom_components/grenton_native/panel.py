@@ -146,11 +146,11 @@ async def ws_watch(hass, connection, msg) -> None:
         connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
         return
     try:
-        await runtime.watch(msg["serial"], msg["object"], msg["indices"])
+        session = await runtime.watch(msg["serial"], msg["object"], msg["indices"])
     except Exception as err:  # noqa: BLE001
         connection.send_error(msg["id"], "watch_failed", str(err))
         return
-    connection.send_result(msg["id"], {"ok": True})
+    connection.send_result(msg["id"], {"ok": True, "session": session})
 
 
 @websocket_api.websocket_command(

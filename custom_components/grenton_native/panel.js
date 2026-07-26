@@ -86,6 +86,13 @@ class GrentonNativePanel extends HTMLElement {
         .summary { word-break:break-all; }
         .logwrap { max-height:60vh; overflow:auto;
                    border:1px solid var(--divider-color,#e0e0e0); border-radius:12px; }
+        .gn input, .gn select { background:var(--card-background-color,#fff);
+                   color:var(--primary-text-color); border:1px solid var(--divider-color,#ccc);
+                   border-radius:8px; padding:4px 8px; font-size:13px; }
+        .watch { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                 margin:4px 0 12px; padding:10px 12px; border-radius:12px;
+                 background:var(--card-background-color,#fff);
+                 border:1px solid var(--divider-color,#e0e0e0); }
       </style>
       <div class="gn">
         <h1>Grenton Native — monitor komunikacji</h1>
@@ -98,6 +105,16 @@ class GrentonNativePanel extends HTMLElement {
         </div>
 
         <div class="clus" id="clus"></div>
+
+        <div class="watch">
+          <strong>Obserwuj obiekt:</strong>
+          <select id="watch-clu"></select>
+          <input id="watch-object" placeholder="obiekt z OM, np. DOU2341" style="min-width:200px">
+          <span style="font-size:12px; color:var(--secondary-text-color)">indeksy</span>
+          <input id="watch-indices" value="0" style="width:70px">
+          <button class="btn" id="watch-btn">Obserwuj</button>
+          <span id="watch-msg" style="font-size:12px; color:var(--secondary-text-color)"></span>
+        </div>
 
         <div class="controls">
           <strong>Log komunikacji (na żywo)</strong>
@@ -138,6 +155,25 @@ class GrentonNativePanel extends HTMLElement {
       this._rows = [];
       this.querySelector("#log").innerHTML = "";
     });
+    this.querySelector("#watch-btn").addEventListener("click", () => this._watch());
+  }
+
+  async _watch() {
+    const serial = this.querySelector("#watch-clu").value;
+    const object = this.querySelector("#watch-object").value.trim();
+    const indices = this.querySelector("#watch-indices").value.trim() || "0";
+    const msg = this.querySelector("#watch-msg");
+    if (!serial || !object) {
+      msg.textContent = "podaj CLU i nazwę obiektu";
+      return;
+    }
+    msg.textContent = "subskrybuję…";
+    try {
+      await this._hass.callWS({ type: "grenton_native/watch", serial, object, indices });
+      msg.textContent = `obserwuję ${object} [${indices}] na ${serial} — zmień stan i patrz w log`;
+    } catch (err) {
+      msg.textContent = "błąd: " + (err.message || err);
+    }
   }
 
   _setStatus(text) {
@@ -195,6 +231,16 @@ class GrentonNativePanel extends HTMLElement {
   _renderClus(clus) {
     const el = this.querySelector("#clus");
     el.innerHTML = "";
+    const sel = this.querySelector("#watch-clu");
+    if (sel) {
+      sel.innerHTML = "";
+      clus.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.serial;
+        opt.textContent = c.object_name || c.serial;
+        sel.appendChild(opt);
+      });
+    }
     clus.forEach((c) => {
       const color = c.alive == null ? "#a1a1aa" : c.alive ? "#10b981" : "#ef4444";
       const label = c.alive == null ? "?" : c.alive ? "online" : "offline";

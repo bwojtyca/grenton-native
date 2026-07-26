@@ -201,6 +201,27 @@ class GrentonRuntime:
     async def check_alive(self, serial: str) -> str | None:
         return await self._do_check_alive(serial)
 
+    async def watch(self, serial: str, object_name: str, indices: str) -> None:
+        """Re-subscribe a CLU to a specific object's feature indices.
+
+        For the "change a device and watch the log" test: point at e.g. a light's
+        object with index 0 (Value), then toggle it — the clientReport pushes
+        will carry the new value. Replaces this CLU's current subscription.
+        """
+        conn = self._connections.get(serial)
+        if conn is None:
+            raise ValueError(f"CLU {serial} is not connected")
+        old = self._sessions.get(serial)
+        if old is not None:
+            try:
+                await conn.client_destroy(old)
+            except Exception:  # noqa: BLE001
+                pass
+        session = secrets.randbelow(60000) + 1
+        self._sessions[serial] = session
+        keys = [(object_name, i) for i in parse_indices(indices)]
+        await conn.client_register(keys, session, lambda *_: None)
+
     async def _do_check_alive(self, serial: str) -> str | None:
         conn = self._connections.get(serial)
         if conn is None:

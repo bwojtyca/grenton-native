@@ -72,6 +72,17 @@ def test_clu_selector_by_serial_and_ip():
     assert project.clu("nope") is None
 
 
+def test_clu_prefixed_serial_is_not_double_prefixed():
+    """Real projects store nameOnCLU already prefixed (e.g. 'CLU221011038');
+    object_name must not become 'CLUCLU221011038'."""
+    system = SYSTEM_XML.replace(b"<nameOnCLU>221011038</nameOnCLU>",
+                                b"<nameOnCLU>CLU221011038</nameOnCLU>")
+    project = load_omp_bytes(_make_omp(system=system))
+    clu = project.clus[0]
+    assert clu.serial == "CLU221011038"
+    assert clu.object_name == "CLU221011038"
+
+
 def test_missing_cipher_key_raises():
     bad_props = b"<ProjectProperties></ProjectProperties>"
     with pytest.raises(ValueError, match="projectCipherKey"):

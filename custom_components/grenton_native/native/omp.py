@@ -101,8 +101,12 @@ def _parse_clus(system_xml: bytes) -> list[CluInfo]:
             continue
         serial = serial_el.text.strip()
         ip = (ip_el.text or "").strip() or None
+        # nameOnCLU already carries the "CLU" prefix in real projects
+        # (e.g. "CLU221011038"); only add it when it's missing so we never
+        # end up addressing "CLUCLU…".
+        object_name = serial if serial.upper().startswith("CLU") else f"CLU{serial}"
         found.setdefault(
             serial,
-            CluInfo(serial=serial, ip=ip, object_name=f"CLU{serial}"),
+            CluInfo(serial=serial, ip=ip, object_name=object_name),
         )
     return sorted(found.values(), key=lambda c: c.serial)

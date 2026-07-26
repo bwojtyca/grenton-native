@@ -40,6 +40,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_check_alive)
     websocket_api.async_register_command(hass, ws_upload_omp)
+    websocket_api.async_register_command(hass, ws_watch)
 
     if not frontend.async_panel_exists(hass, PANEL_URL_PATH):
         frontend.async_register_built_in_panel(
@@ -115,6 +116,30 @@ async def ws_check_alive(hass, connection, msg) -> None:
         return
     reply = await runtime.check_alive(msg["serial"])
     connection.send_result(msg["id"], {"serial": msg["serial"], "reply": reply})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "grenton_native/watch",
+        vol.Required("serial"): str,
+        vol.Required("object"): str,
+        vol.Required("indices"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_watch(hass, connection, msg) -> None:
+    """Re-subscribe a CLU to a chosen object's feature indices."""
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
+        return
+    try:
+        await runtime.watch(msg["serial"], msg["object"], msg["indices"])
+    except Exception as err:  # noqa: BLE001
+        connection.send_error(msg["id"], "watch_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"ok": True})
 
 
 @websocket_api.websocket_command(

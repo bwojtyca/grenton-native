@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "grenton-native"
+version = "0.0.1"
+description = "Clean-room client for Grenton's native CLU UDP protocol, keyed from the Object Manager project (.omp)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/grenton_native"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

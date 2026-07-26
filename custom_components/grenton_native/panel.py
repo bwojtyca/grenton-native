@@ -43,6 +43,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_watch)
     websocket_api.async_register_command(hass, ws_set_active)
     websocket_api.async_register_command(hass, ws_objects)
+    websocket_api.async_register_command(hass, ws_watch_visible)
 
     # Cache-bust the ES module URL with the file's mtime — HA/browsers cache the
     # panel module aggressively by URL, so a fixed URL keeps serving a stale
@@ -181,6 +182,36 @@ def ws_objects(hass, connection, msg) -> None:
         connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
         return
     connection.send_result(msg["id"], {"objects": runtime.objects_map()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "grenton_native/watch_visible",
+        vol.Required("targets"): [
+            vol.Schema(
+                {
+                    vol.Required("clu"): str,
+                    vol.Required("obj"): str,
+                    vol.Optional("index", default=0): vol.Any(int, str),
+                }
+            )
+        ],
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_watch_visible(hass, connection, msg) -> None:
+    """Identify mode: subscribe to a whole filtered set of objects at once."""
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
+        return
+    try:
+        sessions = await runtime.watch_visible(msg["targets"])
+    except Exception as err:  # noqa: BLE001
+        connection.send_error(msg["id"], "watch_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"sessions": sessions})
 
 
 @websocket_api.websocket_command(

@@ -46,6 +46,8 @@ class GrentonNativePanel extends HTMLElement {
     this._observations = {}; // session -> { indices: number[], cell: HTMLElement }
     this._rateWindow = [];
     this._rateTimer = null;
+    this._mapVisible = []; // objects currently shown in the map (after filter)
+    this._visibleObs = {}; // session -> [{clu,obj,index}] for identify mode
   }
 
   set hass(hass) {
@@ -141,6 +143,8 @@ class GrentonNativePanel extends HTMLElement {
         </h2>
         <div class="controls">
           <input id="map-search" placeholder="filtruj: nazwa / grenton_id / typ / domena" style="min-width:320px">
+          <button class="btn" id="observe-visible">Obserwuj widoczne (identyfikacja)</button>
+          <span class="sub" id="identify-msg"></span>
         </div>
         <div id="map" class="logwrap" style="max-height:48vh; margin-bottom:16px"></div>
 
@@ -211,6 +215,32 @@ class GrentonNativePanel extends HTMLElement {
           );
       this._renderMap(list);
     });
+    this.querySelector("#observe-visible").addEventListener("click", () => this._observeVisible());
+  }
+
+  async _observeVisible() {
+    const msg = this.querySelector("#identify-msg");
+    const targets = this._mapVisible
+      .filter((o) => o.clu)
+      .map((o) => ({ clu: o.clu, obj: o.obj_id, index: o.index ?? 0 }));
+    if (!targets.length) {
+      msg.textContent = "brak widocznych obiektów do obserwacji";
+      return;
+    }
+    msg.textContent = `subskrybuję ${targets.length} obiektów…`;
+    try {
+      const res = await this._hass.callWS({
+        type: "grenton_native/watch_visible",
+        targets,
+      });
+      this._visibleObs = {};
+      (res.sessions || []).forEach((s) => {
+        this._visibleObs[s.session] = { keys: s.keys, last: null };
+      });
+      msg.textContent = `identyfikacja: ${targets.length} obiektów — naciśnij przycisk, wiersz mignie`;
+    } catch (err) {
+      msg.textContent = "błąd: " + (err.message || err);
+    }
   }
 
   async _loadObjects() {
@@ -227,17 +257,19 @@ class GrentonNativePanel extends HTMLElement {
     const el = this.querySelector("#map");
     const count = this.querySelector("#map-count");
     if (!el) return;
+    this._mapVisible = list;
     if (count) count.textContent = `· ${list.length} obiektów`;
     el.innerHTML = "";
     const table = document.createElement("table");
     table.className = "log";
     table.innerHTML =
       "<thead><tr><th>nazwa</th><th>grenton_id</th><th>typ</th>" +
-      "<th>→ HA</th><th>cechy</th><th>zdarz.</th><th></th></tr></thead>";
+      "<th>→ HA</th><th>cechy</th><th>zdarz.</th><th>wartość</th><th></th></tr></thead>";
     const tbody = document.createElement("tbody");
     list.forEach((o) => {
       const row = document.createElement("tr");
       row.style.cursor = "pointer";
+      row.dataset.gid = o.grenton_id;
       row.innerHTML = `
         <td>${escapeHtml(o.name || "")}</td>
         <td>${escapeHtml(o.grenton_id)}</td>
@@ -245,11 +277,12 @@ class GrentonNativePanel extends HTMLElement {
         <td>${escapeHtml(o.domain || "")}</td>
         <td>${o.features.length}</td>
         <td>${o.events.length}</td>
+        <td class="rowval">—</td>
         <td class="exp">▸</td>`;
       const detailRow = document.createElement("tr");
       detailRow.style.display = "none";
       const cell = document.createElement("td");
-      cell.colSpan = 7;
+      cell.colSpan = 8;
       detailRow.appendChild(cell);
       row.addEventListener("click", () => {
         const open = detailRow.style.display !== "none";
@@ -485,15 +518,39 @@ class GrentonNativePanel extends HTMLElement {
     if (e.kind !== "report" || !Array.isArray(e.detail)) return;
     const m = /clientReport:(\d+):/.exec(e.summary || "");
     if (!m) return;
-    const obs = this._observations[Number(m[1])];
-    if (!obs) return;
-    obs.indices.forEach((idx, i) => {
-      const cell = obs.cell.querySelector(`.fval[data-idx="${idx}"]`);
-      if (cell) {
-        cell.textContent = fmtVal(e.detail[i]);
-        cell.style.color = "var(--primary-color, #03a9f4)";
-      }
-    });
+    const session = Number(m[1]);
+
+    // Per-feature values in an expanded object's detail table.
+    const obs = this._observations[session];
+    if (obs) {
+      obs.indices.forEach((idx, i) => {
+        const cell = obs.cell.querySelector(`.fval[data-idx="${idx}"]`);
+        if (cell) {
+          cell.textContent = fmtVal(e.detail[i]);
+          cell.style.color = "var(--primary-color, #03a9f4)";
+        }
+      });
+    }
+
+    // Identify mode: update row values; flash only the object that actually
+    // changed (a chunk report carries every subscribed value each time).
+    const vis = this._visibleObs[session];
+    if (vis) {
+      vis.keys.forEach((k, i) => {
+        const row = this.querySelector(`tr[data-gid="${k.clu}->${k.obj}"]`);
+        if (!row) return;
+        const val = row.querySelector(".rowval");
+        if (val) val.textContent = fmtVal(e.detail[i]);
+        if (vis.last && e.detail[i] !== vis.last[i]) {
+          row.style.transition = "background-color .15s";
+          row.style.backgroundColor = "var(--primary-color, #03a9f4)";
+          setTimeout(() => {
+            row.style.backgroundColor = "";
+          }, 700);
+        }
+      });
+      vis.last = e.detail.slice();
+    }
   }
 
   _addRow(e, live) {

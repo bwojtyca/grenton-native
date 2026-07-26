@@ -71,7 +71,9 @@ class GrentonRuntime:
         self._project: OmpProject | None = None
         self._cipher: GrentonCipher | None = None
         self._connections: dict[str, GrentonCluConnection] = {}
-        self._sessions: dict[str, int] = {}
+        # serial → set of active subscription sessions (one per single-object
+        # watch, or several — chunked — for the "observe visible" identify mode).
+        self._sessions: dict[str, set[int]] = {}
         self._status: dict[str, dict[str, Any]] = {}
         self._checkalive_task: asyncio.Task | None = None
         self._active = False           # sessions actually open?
@@ -193,16 +195,23 @@ class GrentonRuntime:
         if self._checkalive_task is not None:
             self._checkalive_task.cancel()
             self._checkalive_task = None
-        for serial, conn in self._connections.items():
-            session = self._sessions.get(serial)
-            try:
-                if session is not None:
-                    await conn.client_destroy(session)
-            except Exception:  # noqa: BLE001
-                pass
+        await self._destroy_sessions()  # clientDestroy every session while sockets live
+        for conn in self._connections.values():
             conn.close()
         self._connections.clear()
-        self._sessions.clear()
+
+    async def _destroy_sessions(self, serials: list[str] | None = None) -> None:
+        """Send clientDestroy for tracked sessions (all CLUs, or the given ones)."""
+        targets = serials if serials is not None else list(self._sessions.keys())
+        for serial in targets:
+            conn = self._connections.get(serial)
+            for session in self._sessions.pop(serial, set()):
+                if conn is None:
+                    continue
+                try:
+                    await conn.client_destroy(session)
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ── event plumbing ────────────────────────────────────────────────────
 
@@ -258,6 +267,7 @@ class GrentonRuntime:
                     "name": obj.name,
                     "type": obj.type,
                     "domain": proposal["domain"],
+                    "index": proposal["index"],
                     "note": proposal["note"],
                     "features": [
                         {
@@ -292,17 +302,54 @@ class GrentonRuntime:
         conn = self._connections.get(serial)
         if conn is None:
             raise ValueError(f"CLU {serial} is not connected")
-        old = self._sessions.get(serial)
-        if old is not None:
-            try:
-                await conn.client_destroy(old)
-            except Exception:  # noqa: BLE001
-                pass
+        await self._destroy_sessions([serial])
         session = secrets.randbelow(60000) + 1
-        self._sessions[serial] = session
+        self._sessions[serial] = {session}
         keys = [(object_name, i) for i in parse_indices(indices)]
         await conn.client_register(keys, session, lambda *_: None)
         return session
+
+    async def watch_visible(self, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Identify mode: subscribe to many objects at once (e.g. all filtered
+        DIN inputs), so physically pressing a button reveals which object fired.
+
+        ``targets`` is a list of ``{clu, obj, index}``. Keys are grouped per CLU
+        and chunked (the CLU caps a single clientRegister payload), each chunk its
+        own session. Returns ``[{session, keys:[{clu,obj,index}]}]`` so the panel
+        can map each report's positional values back to the right object rows.
+        """
+        await self._destroy_sessions()  # fresh identify run
+
+        by_clu: dict[str, list[tuple[str, int]]] = {}
+        for target in targets:
+            try:
+                index = int(target.get("index", 0))
+            except (TypeError, ValueError):
+                index = 0
+            by_clu.setdefault(target["clu"], []).append((target["obj"], index))
+
+        chunk_size = 25  # stay well under the ~2000-byte clientRegister payload cap
+        result: list[dict[str, Any]] = []
+        for clu, keys in by_clu.items():
+            conn = self._connections.get(clu)
+            if conn is None:
+                continue
+            for start in range(0, len(keys), chunk_size):
+                chunk = keys[start : start + chunk_size]
+                session = secrets.randbelow(60000) + 1
+                self._sessions.setdefault(clu, set()).add(session)
+                try:
+                    await conn.client_register(chunk, session, lambda *_: None)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("[%s] identify register failed: %s", clu, err)
+                    continue
+                result.append(
+                    {
+                        "session": session,
+                        "keys": [{"clu": clu, "obj": o, "index": i} for (o, i) in chunk],
+                    }
+                )
+        return result
 
     async def _do_check_alive(self, serial: str) -> str | None:
         conn = self._connections.get(serial)
@@ -328,7 +375,7 @@ class GrentonRuntime:
         if conn is None:
             return
         session = secrets.randbelow(60000) + 1
-        self._sessions[clu.serial] = session
+        self._sessions.setdefault(clu.serial, set()).add(session)
         keys = [(clu.object_name, i) for i in self._indices]
         try:
             await conn.client_register(keys, session, lambda *_: None)

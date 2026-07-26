@@ -7,6 +7,9 @@ secrets/
 local/
 *.local.*
 
+# Exported test logs dropped into the repo for analysis.
+grenton-native-log-*.json
+
 # ── Python ─────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

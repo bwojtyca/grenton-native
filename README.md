@@ -112,4 +112,6 @@ Useful flags: `--clu <serial|ip>`, `--host-ip <ip>`, `--object <name>`,
 Clean-room: implemented from an understanding of the protocol, **not** by copying
 GPL/AGPL sources. Protocol *facts* were confirmed from OpenGr8on's CC BY-SA
 documentation and public reverse-engineering write-ups — see
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md). Project license: **TBD.**
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md). Licensed under **GPL-3.0-or-later** (see
+[`LICENSE`](LICENSE)) — copyleft, aligned with the Grenton reverse-engineering
+ecosystem.

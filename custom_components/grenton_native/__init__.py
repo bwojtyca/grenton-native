@@ -34,8 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[RUNTIME_KEY] = runtime
 
     await async_setup_panel(hass)
-    # Auto-start if a project was uploaded in a previous session.
-    await runtime.async_load_persisted()
+    # Restore project + kill-switch state; open sessions only if left connected.
+    await runtime.async_start_runtime()
 
     _LOGGER.info("Grenton Native panel ready (configured=%s)", runtime.configured)
     return True

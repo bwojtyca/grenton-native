@@ -167,10 +167,7 @@ async def ws_set_active(hass, connection, msg) -> None:
     if runtime is None:
         connection.send_error(msg["id"], "not_ready", "Runtime not initialised")
         return
-    if msg["active"]:
-        await runtime.async_start()
-    else:
-        await runtime.async_stop()
+    await runtime.set_active(msg["active"])
     connection.send_result(msg["id"], runtime.snapshot())
 
 

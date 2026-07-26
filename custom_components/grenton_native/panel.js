@@ -44,6 +44,8 @@ class GrentonNativePanel extends HTMLElement {
     this._active = false;
     this._objects = [];
     this._observations = {}; // session -> { indices: number[], cell: HTMLElement }
+    this._rateWindow = [];
+    this._rateTimer = null;
   }
 
   set hass(hass) {
@@ -54,6 +56,7 @@ class GrentonNativePanel extends HTMLElement {
       this._load();
       this._subscribe();
       this._loadObjects();
+      this._rateTimer = setInterval(() => this._updateRate(), 1000);
     }
   }
 
@@ -62,6 +65,17 @@ class GrentonNativePanel extends HTMLElement {
       this._unsub.then((u) => u && u());
       this._unsub = null;
     }
+    if (this._rateTimer) {
+      clearInterval(this._rateTimer);
+      this._rateTimer = null;
+    }
+  }
+
+  _updateRate() {
+    const now = Date.now();
+    this._rateWindow = this._rateWindow.filter((t) => now - t < 1000);
+    const el = this.querySelector("#rate");
+    if (el) el.textContent = `${this._rateWindow.length} pkt/s`;
   }
 
   _render() {
@@ -106,7 +120,12 @@ class GrentonNativePanel extends HTMLElement {
                  border:1px solid var(--divider-color,#e0e0e0); }
       </style>
       <div class="gn">
-        <h1>Grenton Native — monitor komunikacji</h1>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:4px">
+          <h1 style="margin:0">Grenton Native — monitor komunikacji</h1>
+          <button class="btn" id="conn-toggle">⏻</button>
+          <span class="badge" id="conn-pill" style="margin:0">—</span>
+          <span class="sub" id="rate">0 pkt/s</span>
+        </div>
         <div class="sub" id="status">Ładowanie…</div>
 
         <div class="drop" id="drop">
@@ -137,7 +156,6 @@ class GrentonNativePanel extends HTMLElement {
 
         <div class="controls">
           <strong>Log komunikacji (na żywo)</strong>
-          <button class="btn" id="toggle">▶ Start</button>
           <button class="btn" id="export">Eksportuj</button>
           <button class="btn" id="clear">Wyczyść</button>
           <label style="font-size:12px"><input type="checkbox" id="follow" checked> auto-scroll</label>
@@ -178,7 +196,7 @@ class GrentonNativePanel extends HTMLElement {
       this.querySelector("#log").innerHTML = "";
     });
     this.querySelector("#watch-btn").addEventListener("click", () => this._watch());
-    this.querySelector("#toggle").addEventListener("click", () => this._toggle());
+    this.querySelector("#conn-toggle").addEventListener("click", () => this._toggle());
     this.querySelector("#export").addEventListener("click", () => this._export());
     this.querySelector("#map-search").addEventListener("input", (e) => {
       const q = e.target.value.toLowerCase().trim();
@@ -326,8 +344,14 @@ class GrentonNativePanel extends HTMLElement {
   }
 
   _updateToggle() {
-    const btn = this.querySelector("#toggle");
-    if (btn) btn.textContent = this._active ? "■ Stop" : "▶ Start";
+    const btn = this.querySelector("#conn-toggle");
+    const pill = this.querySelector("#conn-pill");
+    if (btn) btn.textContent = this._active ? "⏻ Rozłącz" : "⏻ Połącz";
+    if (pill) {
+      pill.textContent = this._active ? "połączono" : "rozłączono";
+      pill.style.background = this._active ? "#10b981" : "#ef4444";
+      pill.style.color = "#fff";
+    }
   }
 
   _export() {
@@ -478,6 +502,7 @@ class GrentonNativePanel extends HTMLElement {
     this._events.push(e);
     if (this._events.length > MAX_EVENTS) this._events.shift();
     this._routeReport(e);
+    if (live) this._rateWindow.push(Date.now());
     const tr = document.createElement("tr");
     const t = new Date((e.ts || 0) * 1000).toLocaleTimeString();
     const kindColor = KIND_COLOR[e.kind] || "#666";

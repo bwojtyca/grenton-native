@@ -18,3 +18,7 @@ EVENT_RING_SIZE = 500
 # Where an uploaded project is persisted (under the HA config dir), so it
 # survives restarts and is re-read without re-uploading.
 PROJECT_FILENAME = "project.omp"
+
+# Persisted runtime state (e.g. the connect/disconnect kill-switch), so a manual
+# "disconnect" survives a Home Assistant restart.
+STATE_FILENAME = "runtime.json"

@@ -12,6 +12,7 @@ Read-only toward Grenton: checkAlive + clientRegister/Report + clientDestroy.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import time
@@ -26,6 +27,7 @@ from .const import (
     DOMAIN,
     EVENT_RING_SIZE,
     PROJECT_FILENAME,
+    STATE_FILENAME,
 )
 from .native import events, mapping
 from .native.cipher import GrentonCipher
@@ -61,6 +63,7 @@ class GrentonRuntime:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self._persist_path = hass.config.path(DOMAIN, PROJECT_FILENAME)
+        self._state_path = hass.config.path(DOMAIN, STATE_FILENAME)
 
         self._ring = events.EventRing(EVENT_RING_SIZE)
         self._subscribers: set[Subscriber] = set()
@@ -71,7 +74,8 @@ class GrentonRuntime:
         self._sessions: dict[str, int] = {}
         self._status: dict[str, dict[str, Any]] = {}
         self._checkalive_task: asyncio.Task | None = None
-        self._active = False
+        self._active = False           # sessions actually open?
+        self._desired_active = True    # user intent (the kill-switch), persisted
 
         # defaults (could later be made configurable from the panel)
         self._report_port_base = DEFAULT_REPORT_PORT_BASE
@@ -89,20 +93,23 @@ class GrentonRuntime:
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
-    async def async_load_persisted(self) -> None:
-        """Auto-start from a previously uploaded project, if present."""
+    async def async_start_runtime(self) -> None:
+        """Setup entry point: restore the kill-switch state, load a previously
+        uploaded project (so the object map works even while disconnected), and
+        open sessions only if the user last left us connected."""
+        self._desired_active = await self.hass.async_add_executor_job(self._read_desired)
         path = Path(self._persist_path)
-        if not path.exists():
-            return
-        try:
-            project = await self.hass.async_add_executor_job(load_omp, str(path))
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Could not load persisted project: %s", err)
-            return
-        await self._start(project)
+        if path.exists():
+            try:
+                self._project = await self.hass.async_add_executor_job(load_omp, str(path))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Could not load persisted project: %s", err)
+        if self._project is not None and self._desired_active:
+            await self._start(self._project)
 
     async def async_upload(self, omp_bytes: bytes) -> OmpProject:
-        """Persist an uploaded .omp, then (re)start sessions from it."""
+        """Persist an uploaded .omp and load it. Sessions (re)open only if the
+        kill-switch is currently 'connected'."""
 
         def _save_and_load() -> OmpProject:
             path = Path(self._persist_path)
@@ -111,9 +118,39 @@ class GrentonRuntime:
             return load_omp(str(path))
 
         project = await self.hass.async_add_executor_job(_save_and_load)
+        self._project = project
         await self.async_stop()
-        await self._start(project)
+        if self._desired_active:
+            await self._start(project)
         return project
+
+    # ── kill-switch (persisted connect/disconnect) ─────────────────────────
+
+    async def set_active(self, active: bool) -> None:
+        """Connect (open sessions) or fully disconnect (close everything).
+        Persisted, so a manual disconnect survives a Home Assistant restart."""
+        self._desired_active = active
+        await self.hass.async_add_executor_job(self._write_desired, active)
+        if active:
+            if self._project is not None and not self._active:
+                await self._start(self._project)
+        else:
+            await self.async_stop()
+
+    def _read_desired(self) -> bool:
+        try:
+            with open(self._state_path, encoding="utf-8") as fh:
+                return bool(json.load(fh).get("active", True))
+        except (OSError, ValueError):
+            return True
+
+    def _write_desired(self, active: bool) -> None:
+        try:
+            path = Path(self._state_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"active": active}), encoding="utf-8")
+        except OSError as err:  # noqa: BLE001
+            _LOGGER.warning("Could not persist runtime state: %s", err)
 
     async def _start(self, project: OmpProject) -> None:
         self._project = project
@@ -150,15 +187,6 @@ class GrentonRuntime:
                 await self._subscribe_clu(clu)
         self._checkalive_task = self.hass.loop.create_task(self._checkalive_loop())
         self._active = True
-
-    async def async_start(self) -> None:
-        """(Re)start monitoring from the current or previously-uploaded project."""
-        if self._active:
-            return
-        if self._project is not None:
-            await self._start(self._project)
-        else:
-            await self.async_load_persisted()
 
     async def async_stop(self) -> None:
         self._active = False

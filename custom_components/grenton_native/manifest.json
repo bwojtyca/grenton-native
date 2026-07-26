@@ -1,13 +1,13 @@
 {
   "domain": "grenton_native",
   "name": "Grenton Native (monitor)",
-  "version": "0.0.1",
   "codeowners": ["@bwojtyca"],
   "config_flow": true,
   "dependencies": ["http", "websocket_api", "frontend"],
   "documentation": "https://github.com/bwojtyca/grenton-native",
-  "issue_tracker": "https://github.com/bwojtyca/grenton-native/issues",
-  "iot_class": "local_push",
   "integration_type": "hub",
-  "requirements": []
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/bwojtyca/grenton-native/issues",
+  "requirements": [],
+  "version": "0.0.1"
 }
